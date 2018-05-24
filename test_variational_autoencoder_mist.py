@@ -5,6 +5,9 @@ from chainer import iterators, optimizers, serializers
 from chainer import functions as F
 from mnist import MNIST
 
+# toggleable parameters
+verbose_loss = False
+
 # load data
 mndata = MNIST('/home/mknull/python-mnist/data')
 mndata.load_training()
@@ -25,10 +28,7 @@ use_noise = False
 train_iterator = iterators.SerialIterator(mndata.train_images, batch_size=batch_size)
 test_iterator = iterators.SerialIterator(mndata.test_images, batch_size=batch_size, repeat=False, shuffle=True)
 
-# define networks
-# Encoder = autoencoders.ConvolutionalEncoder(out=latent_l, hidden=100)
-# Decoder = autoencoders.DeconvolutionalDecoder(out=image_l, _in=latent_l, hidden=784, batch_size=batch)
-
+# define model
 model = autoencoders.AutoEncoder(latent_size=latent_size, input_size=image_l,batch_size=batch_size)
 
 # setup optimizers
@@ -38,58 +38,60 @@ model = autoencoders.AutoEncoder(latent_size=latent_size, input_size=image_l,bat
 # optimizer2.setup(Decoder)
 optimizer = optimizers.adam.Adam()
 optimizer.setup(model)
+
+# training loop
 while train_iterator.epoch < max_epoch:
 
-    # train once
+    # get data
     mn_digits = train_iterator.next()
     mn_digits = np.array(np.divide(mn_digits, 255) - 0.5)
     mn_digits = np.reshape(mn_digits,[batch_size, 28, 28]).astype('float32')
-
-    # # latent = Encoder(mn_digits)
-    # # our_digits = Decoder(latent)
-    # # # our_digits = Decoder(Encoder(mn_digits))
-    # our_digits, latent = model(mn_digits, return_latent=True, add_noise=False)
-    #
-    # loss_decoder = F.mean_absolute_error(mn_digits, our_digits)
-    # # latent_means = F.mean(latent[:, :len(latent.data[1])//2],axis=0)
-    # # latent_stds = F.mean(latent[:, len(latent.data[1])//2:], axis=0)
-    #
-    # #     latent_means = latent[0][:len(latent.data[0])//2]
-    # #     latent_stds = latent[0][len(latent.data[0])//2:]
-    # #     latent_stds.data = np.log(latent_stds.data)
-    # #     loss_encoder = F.gaussian_kl_divergence(latent_means,latent_stds)
-
+    
+    # forward pass #
+    
+    # get latent
     means, variances = model.encode(mn_digits)
+    
+    # clear the loss
     loss_encoder = 0
     loss_decoder = 0
-
+    
+    # sample from the latent
     for i in range(n_monte_carlo):
-        if not use_noise:
-            z = F.gaussian(means, variances)
-        else:
+        if use_noise:
             noise = np.random.random_sample(means.shape).astype('float32')
             means.data = means.data + noise
             z = F.gaussian(means, variances)
             means.data = means.data - noise
-
+        else:
+            z = F.gaussian(means, variances)
+            
+        # decode sample
         generated_digits = F.squeeze(model.decode(z))
+        
+        # calculate reconstruction loss
         loss_decoder += F.mean_squared_error(mn_digits,generated_digits)/n_monte_carlo
-
+    
+    # calculate variational loss
     variances = F.log(variances)
     loss_encoder += F.gaussian_kl_divergence(means, variances)
+    
+    # backward pass #
     loss = loss_encoder + loss_decoder
-    # Encoder.cleargrads()
-    # Decoder.cleargrads()
     model.cleargrads()
     loss = loss_decoder + loss_encoder
     loss.backward()
     optimizer.update()
-    # optimizer1.update()
-    # optimizer2.update()
-    print('loss: '+str(loss.data))
+    
+    if verbose_loss
+        print('loss: '+str(loss.data))
+        
     if train_iterator.is_new_epoch:
+        
+        # print epoch information
         print('epoch:{:02d} train_loss:{:.04f} '.format(train_iterator.epoch, float(loss.data)), end='')
-
+        
+        # sample reconstruction
         plt.ion()
         data = generated_digits.data
 
